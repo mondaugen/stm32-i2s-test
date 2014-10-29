@@ -1,4 +1,8 @@
 #include "stm32f4xx.h"
+#include <math.h>
+
+#define UINT16_TO_FLOAT(x) ((float)(x - 0x7fff)/((float)0x7fff))
+#define FLOAT_TO_UINT16(x) ((uint16_t)((x + 1.) * 0x7fff))
 
 void i2s_setup(void)
 {
@@ -83,7 +87,7 @@ void i2s_full_duplex_setup(void)
     /* TXEIE = 1 (Transmit buffer empty interrupt enable), other bits off */
     SPI3->CR2 = 0x80;
     /* Set up duplex instance the same as SPI3, except configure as slave
-     * receive and trigger interrupt what receive buffer full */
+     * receive and trigger interrupt when receive buffer full */
 //    I2S3ext->I2SPR = ((0x3 << 8) | 0xc);
     I2S3ext->I2SPR = ((0x2 << 8) | 0x6);
     /* same as above but I2SCFG = 01 (slave receive) */
@@ -105,12 +109,20 @@ void SPI3_IRQHandler(void)
     static uint16_t lastval;
     static uint16_t lctr, lval;
     static uint16_t rctr, rval;
+    float lphase = 0;
+    float rphase = 0;
+#define PHASE_INC (0.25 / 44100.0 * 2. * M_PI)
     NVIC_ClearPendingIRQ(SPI3_IRQn);
-    if (I2S3ext->SR & (SPI_SR_RXNE)); {
-        lastval = I2S3ext->DR;
+    if (I2S3ext->SR & SPI_SR_RXNE); {
+        if (I2S3ext->SR & SPI_SR_CHSIDE) {
+            rval = I2S3ext->DR;
+        } else {
+            lval = I2S3ext->DR;
+        }
+/*         lastval = I2S3ext->DR; */
         I2S3ext->SR &= ~(SPI_SR_RXNE);
     }
-    if (SPI3->SR & (SPI_SR_TXE)); {
+    if (SPI3->SR & SPI_SR_TXE); {
         /*
         if (SPI3->SR & SPI_SR_CHSIDE) {
             SPI3->DR = lval * 0x7fff;
@@ -126,10 +138,25 @@ void SPI3_IRQHandler(void)
             }
         }
         */
+        if (SPI3->SR & SPI_SR_CHSIDE) {
+            SPI3->DR = FLOAT_TO_UINT16(UINT16_TO_FLOAT(rval));
+//            SPI3->DR = FLOAT_TO_UINT16(UINT16_TO_FLOAT(rval) * (sinf(rphase) + 1.) / 2.);
+            rphase += PHASE_INC;
+//            while (rphase >= 2. * M_PI) {
+//                rphase -= 2. * M_PI;
+//            }
+        } else {
+            SPI3->DR = FLOAT_TO_UINT16(UINT16_TO_FLOAT(lval));
+//            SPI3->DR = FLOAT_TO_UINT16(UINT16_TO_FLOAT(lval) * (sinf(lphase) + 1.) / 2.);
+            lphase += PHASE_INC;
+//            while (lphase >= 2. * M_PI) {
+//                lphase -= 2. * M_PI;
+//            }
+        }
         /*
         SPI3->DR = 0x0f;
-        */
         SPI3->DR = lastval;
+        */
         SPI3->SR &= ~(SPI_SR_TXE);
     }
 }
